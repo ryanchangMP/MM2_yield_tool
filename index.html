@@ -154,28 +154,24 @@ tr.total td{font-weight:500;background:var(--bg2);color:var(--text);border-top:.
 
 <!-- Upload -->
 <div class="card">
-  <div class="stitle">上傳每週報表（每週一個 Excel，可一次多選）</div>
+  <div class="stitle">資料載入</div>
   <div id="gh-load-bar" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-    <button class="btn blue" onclick="loadFromGitHub()" id="gh-btn">⬇ 從 GitHub 自動載入</button>
+    <button class="btn blue" onclick="loadFromGitHub()" id="gh-btn">⬇ 載入最新資料</button>
     <span id="gh-status" style="font-size:12px;color:var(--text2)"></span>
   </div>
-  <div class="hint">系統會自動讀取每個 Excel 的 <b>Top_all</b> 工作表。檔名含 <b>W08、W11</b> 等字樣會自動識別週次。</div>
+  <!-- hidden upload zone kept for internal use by handleFiles() -->
+  <div style="display:none">
+    <div class="upzone" id="drop-zone">
+      <input type="file" id="file-input" accept=".xlsx,.xls" multiple onchange="handleFiles(this.files)"/>
+    </div>
+    <div class="fq" id="file-queue"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn blue" onclick="parseAll()">解析並合併所有週次</button>
+      <button class="btn" onclick="clearAll()">清除</button>
+    </div>
+  </div>
   <div class="alert err" id="a-err"></div>
   <div class="alert ok"  id="a-ok"></div>
-
-  <div class="upzone" id="drop-zone">
-    <input type="file" id="file-input" accept=".xlsx,.xls" multiple onchange="handleFiles(this.files)"/>
-    <div class="u-ico"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
-    <div class="u-title">點擊或拖曳 Excel 檔案（可多選）</div>
-    <div class="u-sub">每個 <b>.xlsx</b> = 一週資料，自動讀取 <b>Top_all</b> Sheet</div>
-  </div>
-
-  <div class="fq" id="file-queue"></div>
-
-  <div class="btn-row">
-    <button class="btn blue" onclick="parseAll()">解析並合併所有週次</button>
-    <button class="btn" onclick="clearAll()">清除</button>
-  </div>
 </div>
 
 <!-- Project select - dropdown -->
@@ -404,7 +400,6 @@ tr.total td{font-weight:500;background:var(--bg2);color:var(--text);border-top:.
 <script>
 const GH_OWNER = 'ryanchangMP';
 const GH_REPO  = 'MM2_yield_tool';
-const GH_PATTERN = /^FTDB_.*W\d+.*_week_CP\.xlsx$/i;
 
 async function loadFromGitHub(){
   const btn = document.getElementById('gh-btn');
@@ -416,7 +411,8 @@ async function loadFromGitHub(){
     const res = await fetch(apiUrl);
     if(!res.ok) throw new Error('GitHub API 回應錯誤: ' + res.status);
     const files = await res.json();
-    const xlsxFiles = files.filter(f => f.type === 'file' && GH_PATTERN.test(f.name));
+    // match FTDB_*W*_week_CP.xlsx pattern
+    const xlsxFiles = files.filter(f => f.type === 'file' && /^FTDB_.*W\d+.*_week_CP\.xlsx$/i.test(f.name));
     if(!xlsxFiles.length){
       status.textContent = '找不到符合 FTDB_*W*_week_CP.xlsx 的檔案';
       btn.disabled = false;
@@ -434,7 +430,9 @@ async function loadFromGitHub(){
       status.textContent = `下載中 ${loaded}/${xlsxFiles.length}…`;
     }
     handleFiles(blobs);
-    status.textContent = `✓ 已載入 ${blobs.length} 個檔案，請按「解析並合併所有週次」`;
+    status.textContent = `✓ 已載入 ${blobs.length} 個檔案，解析中…`;
+    // wait for FileReader async ops then auto-parse
+    setTimeout(()=>{ parseAll(); status.textContent = '✓ 資料載入完成'; }, 1500);
   } catch(e){
     status.textContent = '載入失敗：' + e.message;
   }
