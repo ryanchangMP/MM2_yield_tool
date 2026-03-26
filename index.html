@@ -155,6 +155,10 @@ tr.total td{font-weight:500;background:var(--bg2);color:var(--text);border-top:.
 <!-- Upload -->
 <div class="card">
   <div class="stitle">上傳每週報表（每週一個 Excel，可一次多選）</div>
+  <div id="gh-load-bar" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+    <button class="btn blue" onclick="loadFromGitHub()" id="gh-btn">⬇ 從 GitHub 自動載入</button>
+    <span id="gh-status" style="font-size:12px;color:var(--text2)"></span>
+  </div>
   <div class="hint">系統會自動讀取每個 Excel 的 <b>Top_all</b> 工作表。檔名含 <b>W08、W11</b> 等字樣會自動識別週次。</div>
   <div class="alert err" id="a-err"></div>
   <div class="alert ok"  id="a-ok"></div>
@@ -396,5 +400,46 @@ tr.total td{font-weight:500;background:var(--bg2);color:var(--text);border-top:.
     </div>
   </div>
 </div>
+<!-- GitHub auto-load -->
+<script>
+const GH_OWNER = 'ryanchangMP';
+const GH_REPO  = 'MM2_yield_tool';
+const GH_PATTERN = /^FTDB_.*W\d+.*_week_CP\.xlsx$/i;
+
+async function loadFromGitHub(){
+  const btn = document.getElementById('gh-btn');
+  const status = document.getElementById('gh-status');
+  btn.disabled = true;
+  status.textContent = '正在取得檔案清單…';
+  try {
+    const apiUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/`;
+    const res = await fetch(apiUrl);
+    if(!res.ok) throw new Error('GitHub API 回應錯誤: ' + res.status);
+    const files = await res.json();
+    const xlsxFiles = files.filter(f => f.type === 'file' && GH_PATTERN.test(f.name));
+    if(!xlsxFiles.length){
+      status.textContent = '找不到符合 FTDB_*W*_week_CP.xlsx 的檔案';
+      btn.disabled = false;
+      return;
+    }
+    status.textContent = `找到 ${xlsxFiles.length} 個檔案，下載中…`;
+    let loaded = 0;
+    const blobs = [];
+    for(const f of xlsxFiles){
+      const raw = await fetch(f.download_url);
+      const buf = await raw.arrayBuffer();
+      const blob = new File([buf], f.name, {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      blobs.push(blob);
+      loaded++;
+      status.textContent = `下載中 ${loaded}/${xlsxFiles.length}…`;
+    }
+    handleFiles(blobs);
+    status.textContent = `✓ 已載入 ${blobs.length} 個檔案，請按「解析並合併所有週次」`;
+  } catch(e){
+    status.textContent = '載入失敗：' + e.message;
+  }
+  btn.disabled = false;
+}
+</script>
 </body>
 </html>
