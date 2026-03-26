@@ -400,39 +400,85 @@ tr.total td{font-weight:500;background:var(--bg2);color:var(--text);border-top:.
 <script>
 const GH_OWNER = 'ryanchangMP';
 const GH_REPO  = 'MM2_yield_tool';
+// 單一多-Sheet Excel 檔名（每個 sheet = 一週，sheet 名稱格式 25W26）
+const GH_FILE  = 'FTDB_yield_multiweek.xlsx';
+
+window.addEventListener('DOMContentLoaded', ()=> loadFromGitHub());
 
 async function loadFromGitHub(){
   const btn = document.getElementById('gh-btn');
   const status = document.getElementById('gh-status');
   btn.disabled = true;
-  status.textContent = '正在取得檔案清單…';
+  status.textContent = '下載資料中…';
   try {
-    const apiUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/`;
-    const res = await fetch(apiUrl);
-    if(!res.ok) throw new Error('GitHub API 回應錯誤: ' + res.status);
-    const files = await res.json();
-    // match FTDB_*W*_week_CP.xlsx pattern
-    const xlsxFiles = files.filter(f => f.type === 'file' && /^FTDB_.*W\d+.*_week_CP\.xlsx$/i.test(f.name));
-    if(!xlsxFiles.length){
-      status.textContent = '找不到符合 FTDB_*W*_week_CP.xlsx 的檔案';
+    // 直接下載單一檔案（raw URL 繞過 API rate limit）
+    const rawUrl = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/${GH_FILE}`;
+    const res = await fetch(rawUrl);
+    if(!res.ok) throw new Error('下載失敗: ' + res.status);
+    const buf = await res.arrayBuffer();
+
+    // 用 SheetJS 讀取 workbook
+    const wb = XLSX.read(new Uint8Array(buf), {type:'array'});
+
+    // 篩選符合週次格式的 sheet：YYWww，例如 25W26、26W12
+    const weekSheets = wb.SheetNames.filter(n => /^\d{2}W\d{2}$/i.test(n.trim()));
+    if(!weekSheets.length){
+      status.textContent = '找不到符合 YYWww 格式的週次 Sheet（如 25W26）';
       btn.disabled = false;
       return;
     }
-    status.textContent = `找到 ${xlsxFiles.length} 個檔案，下載中…`;
-    let loaded = 0;
-    const blobs = [];
-    for(const f of xlsxFiles){
-      const raw = await fetch(f.download_url);
-      const buf = await raw.arrayBuffer();
-      const blob = new File([buf], f.name, {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-      blobs.push(blob);
-      loaded++;
-      status.textContent = `下載中 ${loaded}/${xlsxFiles.length}…`;
+
+    // 依週次排序（先比年份 YY，再比週數 WW）
+    weekSheets.sort((a, b) => {
+      const parse = s => { const m = s.match(/^(\d{2})W(\d{2})$/i); return m ? parseInt(m[1])*100+parseInt(m[2]) : 0; };
+      return parse(a) - parse(b);
+    });
+
+    // 清空舊資料
+    rawFiles = [];
+    projData = {};
+    selProj = null;
+
+    status.textContent = `找到 ${weekSheets.length} 個週次，解析中…`;
+
+    // 每個 sheet 解析成一週資料，直接塞進 projData
+    const errSheets = [];
+    weekSheets.forEach(sheetName => {
+      try {
+        const ws = wb.Sheets[sheetName];
+        const tsv = XLSX.utils.sheet_to_csv(ws, {FS:'\t', blankrows:false});
+        const week = sheetName.trim(); // 直接用 sheet 名稱當週次，如 25W26
+        const {projs} = parseTSV(tsv);
+        if(!Object.keys(projs).length){ errSheets.push(sheetName + '（無 Project 資料）'); return; }
+        Object.values(projs).forEach(proj => {
+          if(!projData[proj.name]) projData[proj.name] = [];
+          projData[proj.name].push({week, stages: proj.stages});
+        });
+      } catch(e) {
+        errSheets.push(sheetName + ': ' + e.message);
+      }
+    });
+
+    // 每個 project 依週次排序
+    Object.keys(projData).forEach(k =>
+      projData[k].sort((a, b) => {
+        const parse = s => { const m = s.match(/^(\d{2})W(\d{2})$/i); return m ? parseInt(m[1])*100+parseInt(m[2]) : 0; };
+        return parse(a.week) - parse(b.week);
+      })
+    );
+
+    const projCount = Object.keys(projData).length;
+    if(!projCount){
+      status.textContent = '解析後找不到 Project 資料';
+      btn.disabled = false;
+      return;
     }
-    handleFiles(blobs);
-    status.textContent = `✓ 已載入 ${blobs.length} 個檔案，解析中…`;
-    // wait for FileReader async ops then auto-parse
-    setTimeout(()=>{ parseAll(); status.textContent = '✓ 資料載入完成'; }, 1500);
+
+    let msg = `✓ ${weekSheets.length} 週 / ${projCount} 個 Project 載入完成`;
+    if(errSheets.length) msg += `（${errSheets.length} 個 Sheet 略過）`;
+    status.textContent = msg;
+    renderProjSelect();
+
   } catch(e){
     status.textContent = '載入失敗：' + e.message;
   }
